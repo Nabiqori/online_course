@@ -1,6 +1,5 @@
 from django.contrib import admin
 from django.urls import path
-from django.urls import re_path
 from rest_framework import permissions
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
@@ -34,10 +33,14 @@ urlpatterns = [
     path('api/users/', UserListView.as_view()),
     path('api/users/<int:pk>/', UserDetailView.as_view()),
     path('api/users/my-account/', MyAccountView.as_view()),
+
+    # CourseViewSet
     path('api/courses/', CourseViewSet.as_view({'get': 'list', 'post': 'create'}), name='course-list'),
-    path('api/courses/<int:id>/', CourseViewSet.as_view({'get': 'retrieve', 'put': 'update', 'delete': 'destroy'}), name='course-detail'),
+    path('api/courses/<int:pk>/', CourseViewSet.as_view({'get': 'retrieve', 'put': 'update', 'delete': 'destroy'}), name='course-detail'),
+
     path('api/courses/<int:course_id>/lessons/', LessonListCreateView.as_view(), name='lesson-list'),
-    path('api/courses/<int:course_id>/lessons/<int:id>/', LessonDetailView.as_view(), name='lesson-detail'),
+    path('api/courses/<int:course_id>/lessons/<int:pk>/', LessonDetailView.as_view(), name='lesson-detail'),
+
     path('api/courses/<int:course_id>/pay/', PayCourseView.as_view(), name='pay-course'),
     path('api/payments/', MyPaymentsView.as_view(), name='my-payments'),
     path('api/courses/<int:course_id>/enroll/', EnrollView.as_view(), name='enroll-course'),

@@ -1,5 +1,6 @@
 from django.shortcuts import render, get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.filters import *
@@ -8,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .permissions import IsInstructor
+from .permissions import *
 from .serializers import *
 from rest_framework import generics, permissions
 from .serializers import UserSerializer
@@ -45,7 +46,6 @@ class MyAccountView(generics.RetrieveUpdateDestroyAPIView):
 
 class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.all()
-    serializer_class = CourseSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = []
     search_fields = ['instructor__username','title']
@@ -56,6 +56,11 @@ class CourseViewSet(viewsets.ModelViewSet):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [IsAuthenticated(), IsInstructor()]
         return [permissions.AllowAny()]
+
+    def get_serializer_class(self):
+        if self.action in ['list', 'retrieve']:
+            return CourseDetailSerializer
+        return CourseBaseSerializer
 
     def perform_create(self, serializer):
         if not self.request.user.is_instructor:
@@ -85,36 +90,33 @@ class CourseViewSet(viewsets.ModelViewSet):
         return queryset
 
 class LessonListCreateView(APIView):
-    permission_classes = [IsAuthenticated, IsInstructor]
+    permission_classes = [IsAuthenticated, IsLessonParticipant]
+
+    @swagger_auto_schema(request_body=LessonSerializer)
+    def post(self, request, course_id):
+        course = get_object_or_404(Course, id=course_id)
+        if request.user != course.instructor:
+            raise PermissionDenied("Faqat instruktorga ruxsat.")
+        serializer = LessonSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save(course=course)
+            return Response(serializer.data, status=201)
+        return Response(serializer.errors, status=400)
 
     def get(self, request, course_id):
         lessons = Lesson.objects.filter(course__id=course_id)
         serializer = LessonSerializer(lessons, many=True)
         return Response(serializer.data)
 
-    def post(self, request, course_id):
-        course = get_object_or_404(Course, id=course_id)
-        if request.user != course.instructor:
-            raise PermissionDenied("Faqat instruktorga ruxsat.")
-        serializer = LessonSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(course=course)
-            return Response(serializer.data, status=201)
-        return Response(serializer.errors, status=400)
-
 class LessonDetailView(RetrieveUpdateDestroyAPIView):
     queryset = Lesson.objects.all()
     serializer_class = LessonSerializer
-    permission_classes = [IsAuthenticated, IsInstructor]
+    permission_classes = [IsAuthenticated, IsLessonParticipant]
 
     def perform_update(self, serializer):
-        if self.request.user != self.get_object().course.instructor:
-            raise PermissionDenied("Faqat instruktorga ruxsat.")
         serializer.save()
 
     def perform_destroy(self, instance):
-        if self.request.user != instance.course.instructor:
-            raise PermissionDenied("Faqat instruktorga ruxsat.")
         instance.delete()
 
 class PayCourseView(APIView):
@@ -122,31 +124,27 @@ class PayCourseView(APIView):
 
     def post(self, request, course_id):
         course = Course.objects.get(id=course_id)
-        amount_to_pay = request.data.get('amount', course.price)
 
-        if amount_to_pay <= 0:
-            amount_to_pay = course.price
-
-        if amount_to_pay < course.price:
-            Payment.objects.create(
+        Payment.objects.create(
                 user=request.user,
                 course=course,
-                amount=amount_to_pay,
                 status='pending'
             )
-            return Response({'detail': f"{amount_to_pay} to‘lov kiritildi. Qolgan summa: {course.price - amount_to_pay}"}, status=201)
 
-        payment = Payment.objects.create(
+
+        Payment.objects.create(
             user=request.user,
             course=course,
-            amount=amount_to_pay,
             status='completed'
         )
 
-        student = request.user.student_profile
-        student.courses.add(course)
+        if not hasattr(request.user, 'student_profile'):
+            Student.objects.create(user=request.user)
+
+        request.user.student_profile.courses.add(course)
 
         return Response({'detail': 'To‘lov muvaffaqiyatli amalga oshirildi.'}, status=201)
+
 
 class MyPaymentsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -183,7 +181,6 @@ class CourseStudentsView(APIView):
         serializer = UserSerializer(students, many=True)
         return Response(serializer.data)
 
-
 class CourseReviewView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -192,10 +189,11 @@ class CourseReviewView(APIView):
         serializer = ReviewSerializer(reviews, many=True)
         return Response(serializer.data)
 
+    @swagger_auto_schema(request_body=ReviewSerializer)
     def post(self, request, course_id):
-
         course = Course.objects.get(id=course_id)
-        if self.request.user not in course.students.all():
+
+        if not Student.objects.filter(user=self.request.user, courses__id=course_id).exists():
             raise PermissionDenied("Siz bu kursga yozilmaganligingiz sababli sharh qoldira olmaysiz.")
 
         serializer = ReviewSerializer(data=request.data)
@@ -204,3 +202,16 @@ class CourseReviewView(APIView):
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
 
+
+
+class BecomeStudentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if hasattr(request.user, 'student'):
+            return Response({"detail": "Siz allaqachon student sifatida ro'yxatdan o'tgansiz."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        profile = Student.objects.create(user=request.user)
+        serializer = StudentSerializer(profile)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

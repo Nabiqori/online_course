@@ -12,22 +12,31 @@ class UserSerializer(serializers.ModelSerializer):
         extra_kwargs = {'password': {'write_only': True}}
     def create(self, validated_data):
         return User.objects.create_user(**validated_data)
-
-class CourseSerializer(serializers.ModelSerializer):
-    instructor = UserSerializer( read_only=True)
+class CourseBaseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
-        fields = '__all__'
+        exclude = ['instructor']
 
     def validate_price(self, value):
         if value <= 0:
             raise serializers.ValidationError("Kurs narxi 0 dan katta bo‘lishi kerak.")
         return value
+class CourseDetailSerializer(serializers.ModelSerializer):
+    instructor = UserSerializer(read_only=True)
+
+    class Meta:
+        model = Course
+        fields = '__all__'
+
 
 class LessonSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lesson
         fields = '__all__'
+        extra_kwargs = {
+            'course': {'read_only': True}
+        }
+
 
     def validate_course(self, value):
         if value.instructor != self.context['request'].user:
@@ -43,19 +52,16 @@ class PaymentSerializer(serializers.ModelSerializer):
         if value <= 0:
             raise serializers.ValidationError("To‘lov summasi 0 dan katta bo‘lishi kerak.")
         return value
-
 class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
-        fields = ['id', 'rating', 'comment', 'user', 'course']
+        fields = ['id', 'rating', 'comment']
+        read_only_fields = ['user', 'course']
 
     def validate_rating(self, value):
         if value < 1 or value > 5:
             raise serializers.ValidationError("Reyting 1 dan 5 gacha bo‘lishi kerak.")
         return value
-
-
-
 
 class StudentSerializer(serializers.ModelSerializer):
     class Meta:
